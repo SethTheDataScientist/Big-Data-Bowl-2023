@@ -1,0 +1,25 @@
+Big data bowl big picture steps
+
+1: Make a metric
+Quality of pocket
+2: Prove it's worth a damn by answering "So what, why should I care?"
+Thinking epa, but there are many thing that can happen to eoa after the ball is thrown that quality of pocket don't affect (air yards, interceptions, yac, sack, scramble).
+Could try doing something related to expected EPA based on situation. Then the quality is based on difference to expected epa. Doesn't really account for teams throwing deeper than expected for example.
+I'm thinking to compare it with itself, as well as with epa. It might surprise me with how correlated it is with EPA (in which case, great you're done), but if it doesn't correlate well, you make a composite metric with quality of pocket AND EPA and see if that correlates to epa better than just epa.
+3: What can we do with this new metric
+Bigger fish is trying to give prescriptions based on what increases the quality of pocket metric.
+Need to create a model that tries to predict quality of pocket and make sure our assumptions are valid for explanations, and then see what had increased and decreased value
+Issues I foresee with that model. I don't expect it to predict well without just recreating the calculations itself based on the x and y values. I.e. these values will dwarf the relative importance of any other variable.
+So long as we're just trying to explain, it doesn't have to have that high of a correlation, so long as it passes the ptest.
+Discuss the obvious player and team level evaluations based on opponent adjusted quality of pocket and win rates
+This is where the network analysis would likely arise to be able to determine the importance and value of the difference positions and abilities
+Highlight the ability to divorce qb and ol entanglement a little by showing QBs that leave clean pockets etc.
+4: Great Viz
+Think of what to do to create great Viz for the project.
+Thinking the dots obviously with the bounding box shaded, separately with the pass block lines
+5: Next steps/future analysis
+Discuss creating computer vision to calculate this for you based on a neural network. As essentially we'd have a way to create a labelled dataset. This would allow for mid play predictions
+Merging with ESPN'S block win rates to increase the efficiency of determining pressure
+Evaluation of development from year to year/college to pro if college data were available. Useful for determining which teams develop OL well and potential draft values.
+See the impact of scheme on this. Does changing OL coach change the values. Does a player changing teams change their quality, etc.
+Be able to compare best offenses at helping the OL, does bringing the RB in to block vs check down help more, etc.
