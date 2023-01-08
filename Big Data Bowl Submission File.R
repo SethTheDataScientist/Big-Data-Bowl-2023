@@ -1,9 +1,3 @@
-'''
-Big Data Bowl 2023 Submission File
-Authored by: Seth Lanza & Braxton Justice
-'''
-
-
 # Setup and Libraries -----------------------------------------------------
 
 
@@ -34,7 +28,8 @@ library(ggthemes)
 library(ggplot2)
 library(DT)
 library(DescTools)
-
+library(gt)
+library(formattable)
 
 # Import Data -------------------------------------------------------------
 
@@ -587,7 +582,7 @@ pbpBDB <- pbp %>%
          air_yards2 = lag(air_yards1, 1),
          air_yards = if_else(is.na(air_yards2) == 1, air_yards1, air_yards2)) %>% 
   group_by() %>% 
-  select(gameId, playId, game_seconds_remaining, air_yards, 
+  select(gameId, playId, week, game_seconds_remaining, air_yards, 
          wp, spread_line, pass_oe) 
 
 # Conversion to per play level ----
@@ -621,11 +616,16 @@ WideDF <- na.omit(WideDF)
 
 #MODEL EVALUATION----
 # XGBoost Modeling ----------------------------------------------------------------
-set.seed(0)
 
-parts = createDataPartition(WideDF$QualityOfPocket, p = .8, list = F)
-train = WideDF[parts, ]
-test = WideDF[-parts, ]
+train = WideDF %>% 
+  filter(week <= 6) %>% 
+  select(!week)
+
+test = WideDF %>% 
+  filter(week > 6)%>% 
+  select(!week)
+
+
 
 train_x = data.matrix(train[, -c(128)])
 train_y = t(train[, 128])
@@ -638,9 +638,9 @@ xgb_test = xgb.DMatrix(data = test_x, label = test_y)
 
 watchlist = list(train=xgb_train, test=xgb_test)
 
-model = xgb.train(data = xgb_train, max.depth = 3, watchlist=watchlist, nrounds = 1000, print_every_n = 10, early_stopping_rounds = 100, maximize = F)
+model = xgb.train(data = xgb_train, max.depth = 3, watchlist=watchlist, nrounds = 10000, print_every_n = 10, early_stopping_rounds = 500, maximize = F)
 
-final = xgboost(data = xgb_train, max.depth = 3, nrounds = 32, verbose = 0)
+final = xgboost(data = xgb_train, max.depth = 3, nrounds = 33, verbose = 0)
 
 pred_y = predict(final, xgb_test)
 
@@ -649,84 +649,109 @@ caret::MAE(test_y, pred_y) #mae
 caret::RMSE(test_y, pred_y) #rmse  
 
 
-# mean((test_y - pred_y)^2) #mse
-# [1] 41905.77
-# >   caret::MAE(test_y, pred_y) #mae
-# [1] 173.6377
-# >   caret::RMSE(test_y, pred_y) #rmse  
-# [1] 204.709
+# > mean((test_y - pred_y)^2) #mse
+# [1] 40698.57
+# > caret::MAE(test_y, pred_y) #mae
+# [1] 172.0154
+# > caret::RMSE(test_y, pred_y) #rmse  
+# [1] 201.7389
 
 
 
 importance_matrix <- xgb.importance(model = final)
 
-xgb.plot.importance(importance_matrix)
+
+ggplot(importance_matrix %>% 
+         arrange(desc(Gain)) %>% 
+         slice_head(n = 20), aes(x = Gain, y = reorder(Feature, Gain)))+
+  geom_col(aes(fill = case_when(Gain > 0.12 ~ "#228b22",
+                                Gain > 0.06 ~ "#003366",
+                                Gain > 0.03 ~ "#2f847c",
+                                T ~ "#a32638")))+
+  theme_reach()+
+  scale_fill_identity(aesthetics = c("fill", "color"))+
+  labs(title = "XGBOOST Model Feature Importance",
+       subtitle = "Traditional Pocket Types, Top 20 Features only",
+       y = "Feature",
+       x = "Gain (Importance)",
+       caption = "@SethDataScience")
 
 
 # BART --------------------------------------------------------------------
 
 
 WideDFBart <- na.omit(WideDF) %>% 
-  select_if(~ !is.character(.))
-
-WideDFTrain <- WideDFBart[, -128]
-WideDFTest <- WideDFBart$QualityOfPocket
+  select_if(~ !is.character(.)) 
 
 
-set.seed(0)
+barttrain_x = WideDFBart %>% 
+  filter(week <= 6) %>% 
+  select(!week) %>% 
+  select(!QualityOfPocket)
 
-parts = createDataPartition(WideDFBart$QualityOfPocket, p = .8, list = F)
-barttrain_x = WideDFTrain[parts, ]
-barttrain_y = WideDFTest[parts]
-barttest_x = WideDFTrain[-parts,]
-barttest_y = WideDFTest[-parts]
+barttrain_y = WideDFBart %>% 
+  filter(week <= 6)%>% 
+  select(QualityOfPocket) 
 
-bart_machine = bartMachine(barttrain_x, barttrain_y)
-summary(bart_machine)
+barttest_x = WideDFBart %>% 
+  filter(week > 6) %>% 
+  select(!week) %>% 
+  select(!QualityOfPocket)
 
-rmse_by_num_trees(bart_machine, 
-                  tree_list=c(seq(25, 75, by=5)),
-                  num_replicates=3)
+barttest_y = WideDFBart %>% 
+  filter(week > 6)%>% 
+  select(QualityOfPocket)
 
-bart_machine <- bartMachine(barttrain_x, barttrain_y, num_trees=60, seed=0)
+
+
+bart_machine = bartMachine(barttrain_x, barttrain_y$QualityOfPocket)
 summary(bart_machine)
 
 bartVar <- investigate_var_importance(bart_machine, num_replicates_for_avg = 20)  
 
-BartVarPlot <- data.frame(bartVar$avg_var_props[1:20]) %>% 
+BartVarPlot <- data.frame(bartVar$avg_var_props[1:20]) 
+
+BartVarPlot <- BartVarPlot %>% 
   arrange(desc(BartVarPlot[,1]))
 
 ggplot(BartVarPlot, aes(y = reorder(rownames(BartVarPlot), BartVarPlot[,1]), x = BartVarPlot[,1]))+
-  geom_col()+
+  geom_col(aes(fill = case_when(BartVarPlot[,1] > 0.05 ~ "#228b22",
+                                BartVarPlot[,1] > 0.03 ~ "#003366",
+                                BartVarPlot[,1] > 0.02 ~ "#2f847c",
+                                T ~ "#a32638")))+
   theme_reach()+
-  labs(title = "BART Model Variable Importance (Top 10 Variables)",
+  scale_fill_identity(aesthetics = c("fill", "color"))+
+  labs(title = "BART Model Variable Importance",
+  subtitle = "Traditional Pocket types, Top 20 Variables only",
        y = "Features",
-       x = "Inclusion Proportion")
+       x = "Inclusion Proportion",
+  caption = "@SethDataScience")
 
 
 
 rmse <- function(x, y) sqrt(mean((x - y)^2))
 rsq <- function(x, y) summary(lm(y~x))$r.squared
 y_pred <- predict(bart_machine, barttest_x)
-paste('r2:', rsq(barttest_y, y_pred))
-paste('rmse:', rmse(barttest_y, y_pred))
-cor.test(barttest_y, y_pred, method=c("pearson"))
+paste('r2:', rsq(barttest_y$QualityOfPocket, y_pred))
+paste('rmse:', rmse(barttest_y$QualityOfPocket, y_pred))
+cor.test(barttest_y$QualityOfPocket, y_pred, method=c("pearson"))
 
-#   [1] "r2: 0.490629174935046"
-#   >   paste('rmse:', rmse(barttest_y, y_pred))
-#   [1] "rmse: 121.543045798169"
-#   >   cor.test(barttest_y, y_pred, method=c("pearson"))
-#   
-#   Pearson's product-moment correlation
+# [1] "r2: 0.243311465707482"
+# > paste('rmse:', rmse(barttest_y$QualityOfPocket, y_pred))
+# [1] "rmse: 201.370731869129"
+# > cor.test(barttest_y$QualityOfPocket, y_pred, method=c("pearson"))
 # 
-# data:  barttest_y and y_pred
-# t = 40.489, df = 1702, p-value < 0.00000000000000022
+# Pearson's product-moment correlation
+# 
+# data:  barttest_y$QualityOfPocket and y_pred
+# t = 24.995, df = 1943, p-value < 2.2e-16
 # alternative hypothesis: true correlation is not equal to 0
 # 95 percent confidence interval:
-#  0.6754289 0.7238588
+#  0.4588801 0.5261767
 # sample estimates:
 #       cor 
-# 0.7004493
+# 0.4932661 
+
 
 
 
@@ -739,17 +764,22 @@ RegEPA <- pbp %>%
   filter(play == 1, epa != 0,
          !is.na(epa), !is.na(down)) %>%
   group_by() %>%
-  mutate(QOP = QOP,
+  mutate(QOP = QualityOfPocket,
          QOPPR = percent_rank(QOP),
          epa1 = if_else(pass == 1 , epa*(((wp-0.5)^2*-3)+1),
                         epa * ((wp - 0.5)*if_else(wp > 0.5, -1.5, 1.5)+1)),
          epaPR = percent_rank(epa),
+         epaPR1 = percent_rank(epa1),
          epaplus = (QOPPR),
          epaplus2 = (QOPPR*2 + epaPR)/3,
          epaplus3 = (QOPPR + epaPR)/2,
-         epaplus4 = (QOPPR + epaPR*2)/3)  %>% 
+         epaplus4 = (QOPPR + epaPR*2)/3,
+         epaplus21 = (QOPPR*2 + epaPR1)/3,
+         epaplus31 = (QOPPR + epaPR1)/2,
+         epaplus41 = (QOPPR + epaPR1*2)/3)  %>% 
   select(season, posteam, week, old_game_id, play_id, QOP, QOPPR, epa, epa1, epaPR, epaplus,
-         epaplus2, epaplus3, epaplus4)
+         epaplus2, epaplus3, epaplus4,
+         epaplus21, epaplus31, epaplus41)
 
 CheckCORRegEPA <- RegEPA %>%
   group_by(season, posteam) %>% 
@@ -764,6 +794,9 @@ CheckCORRegEPA <- RegEPA %>%
             EPAPlus2cor = cor(epaplus2, NextEPA),
             EPAPlus3cor = cor(epaplus3, NextEPA),
             EPAPlus4cor = cor(epaplus4, NextEPA),
+            EPAPlus21cor = cor(epaplus21, NextEPA),
+            EPAPlus31cor = cor(epaplus31, NextEPA),
+            EPAPlus41cor = cor(epaplus41, NextEPA),
             QOPtoEPAcor = cor(epa, QOP)
   ) 
 
@@ -776,7 +809,7 @@ RegEPAWeek <- pbp %>%
   filter(play == 1, epa != 0,
          !is.na(epa), !is.na(down)) %>%
   group_by() %>%
-  mutate(QOP = QOP,
+  mutate(QOP = QualityOfPocket,
          epa1 = if_else(pass == 1 , epa*(((wp-0.5)^2*-3)+1),
                         epa * ((wp - 0.5)*if_else(wp > 0.5, -1.5, 1.5)+1)))  %>%
   group_by(season, posteam, week) %>% 
@@ -790,9 +823,13 @@ RegEPAWeek <- pbp %>%
          epaplus = QOPPR,
          epaplus2 = (QOPPR*2 + epaPR)/3,
          epaplus3 = (QOPPR + epaPR)/2,
-         epaplus4 = (QOPPR + epaPR*2)/3) %>% 
+         epaplus4 = (QOPPR + epaPR*2)/3,
+         epaplus21 = (QOPPR*2 + epaPR1)/3,
+         epaplus31 = (QOPPR + epaPR1)/2,
+         epaplus41 = (QOPPR + epaPR1*2)/3) %>% 
   select(season, posteam, week, QOP, QOPPR, epa, epa1, epaPR, epaplus,
-         epaplus2, epaplus3, epaplus4)
+         epaplus2, epaplus3, epaplus4,
+         epaplus21, epaplus31, epaplus41)
 
 CheckCORRegEPAWeek <- RegEPAWeek %>%
   group_by(season, posteam) %>%  
@@ -806,6 +843,9 @@ CheckCORRegEPAWeek <- RegEPAWeek %>%
             EPAPlus2cor = cor(epaplus2, NextEPA),
             EPAPlus3cor = cor(epaplus3, NextEPA),
             EPAPlus4cor = cor(epaplus4, NextEPA),
+            EPAPlus21cor = cor(epaplus21, NextEPA),
+            EPAPlus31cor = cor(epaplus31, NextEPA),
+            EPAPlus41cor = cor(epaplus41, NextEPA),
             QOPtoEPAcor = cor(epa, QOP)
   ) 
 
@@ -819,20 +859,37 @@ QOPPLOT <- RegEPAWeek %>%
 
 ggplot(QOPPLOT, aes(x = epaplus4, y = NextEPA))+
   geom_point()+
-  geom_smooth()+
-  geom_smooth(method = "lm", color = "red")
+  geom_smooth(method = "lm", color = "red")+
+  theme_reach()+
+  labs(title = "Next Week's EPA output vs Composite EPA & PoQIT",
+       subtitle = "Composite Metric is 2/3's Current Week EPA and 1/3 PoQIT, Correlation of 0.124",
+       y = "Next Week's EPA",
+       x = "Percentile of Composite EPA and PoQIT")
 
 ggplot(QOPPLOT, aes(x = epa, y = NextEPA))+
   geom_point()+
-  geom_smooth()+
-  geom_smooth(method = "lm", color = "red")
+  geom_smooth(method = "lm", color = "red")+
+  theme_reach()+
+  labs(title = "Next Week's EPA output vs Current EPA",
+       subtitle = "Using just Current Week's EPA, there is very low correlation of 0.064",
+       y = "Next Week's EPA",
+       x = "Current Week's EPA")
+
 
 lm <- lm(NextEPA ~ epaplus4, data = QOPPLOT)
 summary(lm)
 
 
 ggplot(QOPPLOT, aes(x = QOP))+
-  geom_density(aes())
+  geom_density(aes(fill = "#cb4154", color = "#a32638",  alpha = 0.7))+
+  theme_reach()+
+  scale_fill_identity(aesthetics = c("fill", "color"))+
+  scale_linewidth()+
+  labs(title = "Density Plot of Week-Level PoQIT",
+       subtitle = "It appears to be a Normal Distribution, which is encouraging.
+       This metric could easily be centered and scaled, but there is an interesting point to be made that the average measure is Negative.",
+       y = "Density", 
+       x = "Week-Level Average PoQIT")
 
 ggplot(QOPPLOT, aes(x = epa))+
   geom_density(aes())
@@ -855,9 +912,6 @@ EPAFill <- pbp %>%
 WideTeam <- FEDF %>%
   group_by(gameId, playId, team) %>% 
   summarise() %>% 
-  left_join(offensedf, by = c("gameId", "playId")) %>% 
-  filter(team == possessionTeam) %>% 
-  select(!possessionTeam) %>% 
   left_join(OLDF, by = c("gameId", "playId"))  %>% 
   left_join(SlidesDF, by = c("gameId", "playId"))  %>% 
   left_join(DLDF, by = c("gameId", "playId")) %>% 
@@ -871,95 +925,121 @@ WideTeam <- FEDF %>%
   left_join(TTT, by = c("gameId", "playId")) %>% 
   left_join(EPAFill, by = c("gameId" = "old_game_id", "playId" = "play_id")) %>% 
   left_join(QualityOfPocket, by = c("gameId", "playId"))  %>% 
-  group_by() %>% 
-  select(!gameId) %>% 
-  select(!playId) %>% 
-  select(!MaxWidth.x) %>% 
-  select(!AvgDir) %>% 
-  select(!AvgDirIOL) %>% 
-  select(!DLStart) %>% 
-  select(!team)
+  group_by()
+
 
 WideTeam <- na.omit(WideTeam)
 
+WideTeamCor <- WideTeam %>% 
+  mutate(PoQIT = QualityOfPocket) %>% 
+  select(!gameId) %>% 
+  select(!playId) %>% 
+  select(!team) %>% 
+  select(!week) %>% 
+  select(!AvgDir) %>% 
+  select(Rushers, BackBlock, pff_playAction, PoQIT)
+
+WideTeamCor <- WideTeamCor[,-c(43:101)]
 
 options(scipen = 999)
-AllCor <- cor(WideTeam)
+AllCor <- cor(WideTeamCor)
 AllCor <- AllCor[,130]
 view(AllCor)
 
+AllCor <- as.data.frame(AllCor)
 
+AllCor$Features <- rownames(AllCor)
 
-ggplot(WideDF, aes(x = PA, y = QualityOfPocket))+
-  geom_smooth(method = "lm")+
-  geom_boxplot(aes(group = PA))
+AllCor <- AllCor %>% 
+  select(Features, everything())
 
+gt(AllCor)%>%
+  tab_header(title = "Counter-Intuitive Features Correlation Table",
+             subtitle = "Highlighting the Correlation from some of the confusing features")%>%
+  data_color(columns = c(Rushers, BackBlock, pff_playAction, PoQIT),
+             colors = scales::col_numeric(palette = colors, domain = NULL))  %>% 
+  tab_source_note("Data: 2021 Weeks 1-8. | Viz: @SethDataScience")
 
 
 TeamsAnalysis <- WideTeam %>% 
+  left_join(offensedf, by = c("gameId", "playId")) %>%   
+  filter(team == possessionTeam) %>% 
+  select(!possessionTeam) %>% 
   group_by(team) %>% 
   summarise(Plays = n(),
-            QOP = mean(QualityOfPocket),
-            OLAccel = mean(OLAccel),
-            OLSpeed = mean(OLSpeed),
-            RolloutRate = (sum(SCRAMBLE_ROLLOUT_RIGHT) + sum(SCRAMBLE_ROLLOUT_LEFT)) / Plays,
-            PARate = sum(pff_playAction)/Plays,
+            PoQIT = mean(QualityOfPocket),
+            PassOE = mean(pass_oe),
             BackBlockRate = sum(BackBlock) / Plays,
-            DLAccel = mean(DLAccel),
-            DLSpeed = mean(DLSpeed),
-            StuntRate = sum(Stunt) / Plays
-  )
+            BlitzFacedRate = sum(if_else(Rushers >= 5, 1, 0))/Plays,
+            BackBlockOE = BackBlockRate - BlitzFacedRate, 
+            AverageRushersFaced = mean(Rushers),
+            DLSpeedFaced = mean(DLSpeed))  %>% 
+  mutate(Team = team) %>%
+  select(Team, everything()) %>%
+  select(!team) %>%
+  select(!Plays) %>%
+  mutate(PoQIT = round(PoQIT, 2),
+         PassOE = round(PassOE, 2),
+         BackBlockRate = as.numeric((round(BackBlockRate, 4)*100)),
+         BlitzFacedRate = as.numeric((round(BlitzFacedRate, 4)*100)),
+         BackBlockOE = round(BackBlockRate - BlitzFacedRate, 2),
+         AverageRushersFaced = round(AverageRushersFaced, 2),
+         DLSpeedFaced = round(DLSpeedFaced, 2)
+  )  %>% 
+  arrange(desc(PoQIT))
 
 
-
-OLPlayerAnalysis <- df %>% 
-  left_join(framesInt, by = c("gameId", "playId")) %>% 
-  left_join(offensedf, by = c("gameId", "playId")) %>% 
-  left_join(pff, by = c("gameId", "playId", "nflId")) %>%
-  group_by(gameId, playId) %>% 
-  filter(team == possessionTeam) %>% 
-  filter(!is.na(pff_role), pff_role == "Pass Block",
-         pff_positionLinedUp == "LT" |
-           pff_positionLinedUp == "LG" |
-           pff_positionLinedUp == "C" |
-           pff_positionLinedUp == "RG" |
-           pff_positionLinedUp == "RT" ) %>%
-  filter(!is.na(start_frame), !is.na(end_frame),
-         frameId >= start_frame, frameId <= end_frame)  %>%
-  group_by(team, jerseyNumber, nflId) %>% 
-  summarise(AvgSpeed = mean(s, na.rm = T),
-            AvgAccel = mean(a, na.rm = T))
-
-
-
-
-DLPlayerAnalysis <- df %>% 
-  left_join(framesInt, by = c("gameId", "playId")) %>% 
+TeamsDefAnalysis <- WideTeam %>% 
   left_join(defensedf, by = c("gameId", "playId")) %>% 
-  left_join(pff, by = c("gameId", "playId", "nflId")) %>%
-  group_by(gameId, playId) %>% 
   filter(team == defensiveTeam) %>% 
-  filter(!is.na(pff_role), pff_role == "Pass Rush",
-         pff_positionLinedUp == "NRT" |
-           pff_positionLinedUp == "NT" |
-           pff_positionLinedUp == "NLT" |
-           pff_positionLinedUp == "LOLB" |
-           pff_positionLinedUp == "LE"  |
-           pff_positionLinedUp == "REO" |
-           pff_positionLinedUp == "DLT" |
-           pff_positionLinedUp == "DRT" |
-           pff_positionLinedUp == "RE" |
-           pff_positionLinedUp == "LEO" |
-           pff_positionLinedUp == "ROLB"|
-           pff_positionLinedUp == "LILB" |
-           pff_positionLinedUp == "RILB"
-  ) %>%
-  filter(!is.na(start_frame), !is.na(end_frame),
-         frameId >= start_frame, frameId <= end_frame)  %>%
-  mutate(Roundx = round(x, 0)) %>% 
-  group_by(team, jerseyNumber, nflId) %>% 
-  summarise(AvgSpeed = mean(s, na.rm = T),
-            AvgAccel = mean(a, na.rm = T))
+  select(!defensiveTeam) %>% 
+  group_by(team) %>% 
+  summarise(Plays = n(),
+            PoQITAllowed = mean(QualityOfPocket),
+            PassOEAgainst = mean(pass_oe),
+            BackBlockAgainstRate = sum(BackBlock) / Plays,
+            BlitzRate = sum(if_else(Rushers >= 5, 1, 0))/Plays,
+            BackBlockOEAgainst = BackBlockAgainstRate - BlitzRate, 
+            AverageRushers = mean(Rushers),
+            DLSpeed = mean(DLSpeed))  %>%  
+  mutate(Team = team) %>%
+  select(Team, everything()) %>%
+  select(!team) %>%
+  select(!Plays) %>%
+  mutate(PoQITAllowed = round(PoQITAllowed, 2),
+         PassOEAgainst = round(PassOEAgainst, 2),
+         BackBlockAgainstRate = as.numeric((round(BackBlockAgainstRate, 4)*100)),
+         BlitzRate = as.numeric((round(BlitzRate, 4)*100)),
+         BackBlockOEAgainst = round(BackBlockAgainstRate - BlitzRate, 2),
+         AverageRushers = round(AverageRushers, 2),
+         DLSpeed = round(DLSpeed, 2),
+         )  %>% 
+  arrange((PoQITAllowed)) 
+
+
+
+
+toptable <- TeamsAnalysis[c(1:5,28:32),]
+
+Bottomtable <- TeamsDefAnalysis[c(1:5,28:32),]
+
+colors <- colorRamp(c("#FF0000", "#00FF00"))
+invcolors <- colorRamp(c("#00FF00", "#FF0000"))
+
+
+gtable <- Bottomtable
+
+gtableplot <- gt(gtable) %>% 
+  tab_header(title = "Team-level Analysis of PoQIT and its important features",
+             subtitle = "Defense Top and Bottom 5 by PoQIT Allowed")%>%
+  data_color(columns = c(PoQITAllowed, PassOEAgainst),
+             colors = scales::col_numeric(palette = invcolors, domain = NULL)) %>% 
+  data_color(columns = c(BackBlockAgainstRate, BlitzRate, BackBlockOEAgainst, DLSpeed, AverageRushers),
+             colors = scales::col_numeric(palette = colors, domain = NULL)) %>% 
+  tab_source_note("Data: 2021 Weeks 1-8. | Viz: @SethDataScience")
+
+
+gtableplot
 
 
 
@@ -1153,14 +1233,22 @@ QBDist <- as.data.frame(networkdist[,10])
 #DATA VIZ ----------------------------------------------------------------
 # Field stuff -------------------------------------------------------------
 
+SelectPlay <- plays %>%
+  select(gameId, playId, playDescription) %>% 
+  filter(gameId == 2021091300, playId == 3664)  %>% 
+  left_join(df)
 
 xmin <- 0
 xmax <- 160/3
 hash_right <- 38.35
 hash_left <- 12
 hash_width <- 3.3
-ymin <- 45
-ymax <- 60
+ymin <- max(round(min(SelectPlay$x, 
+                      na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(SelectPlay$x, 
+                      na.rm = TRUE) + 10, -1), 120)
+ymin = 35
+ymax = 50
 df_hash <- 
   expand.grid(x = c(0, 23.36667, 29.96667, xmax), 
               y = (10:110)) %>% 
@@ -1188,13 +1276,13 @@ field_base <- ggplot() +
 
 
 workDFViz <- workDF2 %>% 
-  filter(gameId == 2021091906, playId == 3050) %>% 
+  inner_join(SelectPlay) %>% 
   group_by(gameId, playId, frameId) %>% 
   summarise(Polygon = head(poly, 1))
 
 
 dfBlockViz <- df %>% 
-  filter(gameId == 2021091906, playId == 3050) %>% 
+  inner_join(SelectPlay) %>% 
   left_join(framesInt, by = c("gameId", "playId")) %>% 
   left_join(play_block_rush, by = c("gameId", "playId", "nflId")) %>%
   filter(!is.na(pff_role)) %>%
@@ -1219,7 +1307,7 @@ dfBlockViz <- df %>%
 
 
 PlayViz1 <- df %>% 
-  filter(gameId == 2021091906, playId == 3050) %>% 
+  inner_join(SelectPlay) %>% 
   left_join(framesInt, by = c("gameId", "playId")) %>% 
   left_join(play_block_rush, by = c("gameId", "playId", "nflId")) %>%
   filter(!is.na(pff_role)) %>%
@@ -1292,12 +1380,12 @@ AreaModelPR <- workDF2 %>%
             AREAPR = AREAPR)
 
 AreaModelViz  <- AreaModelPR %>% 
-  filter(gameId == 2021091906, playId == 3050) 
+inner_join(SelectPlay) 
 
 
 
 PlayVizBlock <- df %>% 
-  filter(gameId == 2021091906, playId == 3050) %>% 
+inner_join(SelectPlay) %>%  
   left_join(framesInt, by = c("gameId", "playId")) %>% 
   left_join(play_block_rush, by = c("gameId", "playId", "nflId")) %>%
   filter(!is.na(pff_role)) %>%
@@ -1307,7 +1395,6 @@ PlayVizBlock <- df %>%
   mutate(frameId = as.numeric(frameId))
 
 
-colors <- colorRamp(c("#FF0000", "#00FF00"))
 
 
 PlayViz <- PlayViz4 %>% 
@@ -1353,8 +1440,19 @@ play_animationVIZ <- field_base +
   scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
   scale_fill_identity(aesthetics = c("fill", "color")) +
   ylim(ymin, ymax)+
-  cowplot::theme_nothing() + theme(plot.title = element_text()) +
-  labs(title = "NE vs NYJ 1st Percentile Pocket")+
+  cowplot::theme_nothing() + theme(plot.title = element_text(),
+                                   plot.subtitle = element_text(),
+                                   plot.caption = element_text()) +
+  labs(title = "LV vs BAL 92nd Percentile PoQIT
+       
+       ",
+       subtitle = "Percentile out of All plays, selecting to highlight only plays 
+       with 4+ Rushers, outside of 2-minute situations.
+       
+       
+       
+       ",
+       caption = "@SethDataScience")+
   transition_time(PlayViz$frameId) +
   ease_aes('linear') + NULL
 
