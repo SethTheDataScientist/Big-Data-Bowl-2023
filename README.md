@@ -2,7 +2,7 @@ PoQIT: Big Data Bowl Competition 2023 Submission
 
 https://www.kaggle.com/code/sethlanza/poqit-big-data-bowl-2023-submission
 
--Developed a new metric (PoQIT: Pocket Quality Iteration) to analyze the pocket established by the offensive line during a play using tracking data provided by the NFL.
+-Developed a new metric (PoQIT: Pocket Quality In Time) to analyze the pocket established by the offensive line during a play using tracking data provided by the NFL.
 
 ![LV test](https://user-images.githubusercontent.com/81538390/211197022-9502d1b6-b844-46c7-8d67-1518747fd305.gif)
 
